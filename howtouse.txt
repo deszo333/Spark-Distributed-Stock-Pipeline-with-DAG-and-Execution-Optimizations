@@ -1,0 +1,14 @@
+
+uvicorn api.main:app --reload
+
+
+python spark_pipeline/ingestion.py
+
+
+python spark_pipeline/signal_engine.py
+
+
+
+Instead of running standard python, you will use the mpiexec command provided by MS-MPI to force the script to run in parallel. To run your benchmark on 4 cores, you would type:
+
+mpiexec -n 4 python mpi_benchmark/monte_carlo_risk.py

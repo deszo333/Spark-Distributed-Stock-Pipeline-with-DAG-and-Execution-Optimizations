@@ -1,0 +1,37 @@
+{
+  "data_mode": "synthetic",
+  "replay_filepath": "data/raw/SP500_Historical_Data.csv",
+  "tick_interval_seconds": 0.2,
+  "active_symbols": [
+    {
+      "symbol": "AAPL",
+      "base_price": 100.0
+    },
+    {
+      "symbol": "TSLA",
+      "base_price": 100.0
+    },
+    {
+      "symbol": "NVDA",
+      "base_price": 100.0
+    }
+  ],
+  "max_files_per_trigger": 5,
+  "sma_window": 20,
+  "rsi_window": 14,
+  "starting_cash": 100000.0,
+  "min_ai_confidence": 0,
+  "trade_size_shares": 1,
+  "max_chart_points": 100,
+  "benchmark_workload": 5000,
+  "market_condition": "normal",
+  "auto_trade": false,
+  "position_sizing": "fixed",
+  "risk_pct": 0.05,
+  "xgb_weight": 0.5,
+  "lasso_weight": 0.5,
+  "use_rsi": true,
+  "use_macd": true,
+  "use_volume": true,
+  "use_sma": true
+}

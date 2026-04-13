@@ -1,0 +1,25 @@
+FROM python:3.10-slim
+
+# Install Java (for PySpark) and MPI (for mpi4py)
+RUN apt-get update && \
+    apt-get install -y default-jre mpich libmpich-dev build-essential gcc && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set Java Home for PySpark
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy project files
+COPY . .
+
+# Expose FastAPI port
+EXPOSE 8000
+
+# Default command runs the API (we'll run Spark/MPI via docker exec)
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
