@@ -143,3 +143,14 @@ dmypy.json
 data/mpi_results.json
 data/stock_metrics.json
 *.state
+
+# Development/Build/Documentation clutter
+compiler.py
+AUDIT_FIXES.md
+BUG_FIXES.md
+ENHANCEMENTS.md
+compiled_project.txt
+howtouse.txt
+*.txt
+historical_benchmark.py
+mpi_benchmark.py
