@@ -1,9 +1,21 @@
 @echo off
+cd /d "%~dp0"
 title PDC Parallel ML Pipeline
 echo ========================================================
 echo   STARTING PDC AUTOMATED PIPELINE
 echo ========================================================
 echo.
+
+:: --- ACTIVATE VIRTUAL ENVIRONMENT (From Parent Folder) ---
+if exist "..\venv\Scripts\activate.bat" (
+    echo [System] Activating Virtual Environment...
+    call "..\venv\Scripts\activate.bat"
+    echo.
+) else (
+    echo [System] No 'venv' folder found one level up. Using global Python.
+    echo.
+)
+:: ---------------------------------------------------------
 
 echo [1/2] Executing Data Ingestion (Multiplier)...
 python ingestion.py
