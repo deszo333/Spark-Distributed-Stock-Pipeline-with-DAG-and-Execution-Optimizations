@@ -191,7 +191,7 @@ import time
 import multiprocessing
 import psutil
 
-NUM_CORES = multiprocessing.cpu_count() or 2
+NUM_CORES = min(multiprocessing.cpu_count() or 2, 16)
 _total_gb = psutil.virtual_memory().total / (1024 ** 3)
 
 # Scale memory to available RAM  [AUTO-4]
