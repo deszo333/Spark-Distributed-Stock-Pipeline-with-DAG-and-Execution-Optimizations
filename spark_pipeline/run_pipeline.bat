@@ -6,6 +6,8 @@ echo   STARTING PDC AUTOMATED PIPELINE
 echo ========================================================
 echo.
 
+set PYSPARK_SUBMIT_ARGS=--driver-memory 8g pyspark-shell
+
 :: --- ACTIVATE VIRTUAL ENVIRONMENT (From Parent Folder) ---
 if exist "..\venv\Scripts\activate.bat" (
     echo [System] Activating Virtual Environment...
@@ -30,6 +32,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo [2/2] Executing ML Forecaster (Training / Benchmark)...
+set PDC_RUN_MODE=benchmark
 python ml_forecaster.py
 
 :: Check if forecaster crashed.

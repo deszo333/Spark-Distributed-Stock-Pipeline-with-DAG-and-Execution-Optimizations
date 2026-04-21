@@ -305,6 +305,41 @@ function UnifiedConfigModal({ open, onClose, config, onConfigChange, onResetPort
             <input type="range" min={0.1} max={5} step={0.1} value={local.tick_interval_seconds ?? 2} onChange={e => apply({ tick_interval_seconds: Number(e.target.value) })} style={{ width: '100%', accentColor: theme.cyan }}/>
           </div>
 
+          <div>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 13,
+              color: theme.textMuted,
+              marginBottom: 12,
+              fontWeight: 500
+            }}>
+              <span>Live Market Workload (Symbols/Tick)</span>
+              <span style={{ color: theme.red, fontWeight: 700 }}>
+                {local.stream_workload ?? 100}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={10}
+              max={500}
+              step={10}
+              value={local.stream_workload ?? 100}
+              onChange={e => apply({ stream_workload: Number(e.target.value) })}
+              style={{ width: '100%', accentColor: theme.red }}
+            />
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 11,
+              color: theme.textSub,
+              marginTop: 4
+            }}>
+              <span>10 symbols (light)</span>
+              <span>500 symbols (stress)</span>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: theme.surfaceHigh, borderRadius: 10, border: `1px solid ${theme.border}` }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>Auto Trading</div>
@@ -360,9 +395,14 @@ function MainDashboard() {
   const wsRef             = useRef(null);
   const reconnectRef      = useRef(null);
   const reconnectAttempts = useRef(0);
+  const pendingTickRef    = useRef(null);
+  const renderTimerRef    = useRef(null);
 
   const [globalState, setGlobalState]         = useState(null);
-  const [liveConfig, setLiveConfig]           = useState({});
+  const [liveConfig, setLiveConfig]           = useState({
+    tick_interval_seconds: 2.0,
+    stream_workload:       100,
+  });
   const [allTickers, setAllTickers]           = useState([]);
   const [watchlist, setWatchlist]             = useState(["AAPL","TSLA","NVDA"]);
   const [selectedStock, setSelectedStock]     = useState("AAPL");
@@ -403,6 +443,54 @@ function MainDashboard() {
         if (msg.type === 'state_update') {
           setGlobalState(msg.data);
           if (msg.data.config) setLiveConfig(msg.data.config);
+        } else if (msg.type === 'tick_update') {
+          const prevPending = pendingTickRef.current;
+          pendingTickRef.current = {
+            ...msg.data,
+            symbols: {
+              ...(prevPending?.symbols ?? {}),
+              ...(msg.data.symbols ?? {}),
+            },
+          };
+          if (!renderTimerRef.current) {
+            renderTimerRef.current = setTimeout(() => {
+              const delta = pendingTickRef.current;
+              pendingTickRef.current = null;
+              renderTimerRef.current = null;
+              if (!delta) return;
+              setGlobalState(prev => {
+                if (!prev) return prev;
+                const next = {
+                  ...prev,
+                  global_trading: delta.global_trading ?? prev.global_trading,
+                  top_movers: delta.top_movers ?? prev.top_movers,
+                  config: delta.config ?? prev.config,
+                };
+                if (delta.replay_accuracy) next.replay_accuracy = delta.replay_accuracy;
+                Object.entries(delta.symbols ?? {}).forEach(([sym, patch]) => {
+                  const oldState = next[sym] ?? { market: { history: [] }, indicators: {}, signals: {}, metrics: {}, anomalies: [] };
+                  const oldHistory = oldState.market?.history ?? [];
+                  const point = patch.market?.history_point;
+                  const history = point ? [...oldHistory.slice(-99), point] : oldHistory;
+                  next[sym] = {
+                    ...oldState,
+                    market: {
+                      ...(oldState.market ?? {}),
+                      ...(patch.market ?? {}),
+                      history,
+                    },
+                    indicators: patch.indicators ?? oldState.indicators,
+                    signals: patch.signals ?? oldState.signals,
+                    metrics: patch.metrics ?? oldState.metrics,
+                    anomalies: patch.anomalies ?? oldState.anomalies,
+                  };
+                  delete next[sym].market.history_point;
+                });
+                return next;
+              });
+              if (delta.config) setLiveConfig(delta.config);
+            }, 200);
+          }
         } else if (msg.type === 'config_update') {
           setLiveConfig(msg.data);
         }
@@ -427,7 +515,11 @@ function MainDashboard() {
       .catch(e => console.error("Failed to fetch symbols:", e));
       
     connectWS();
-    return () => { clearTimeout(reconnectRef.current); wsRef.current?.close(); };
+    return () => {
+      clearTimeout(reconnectRef.current);
+      clearTimeout(renderTimerRef.current);
+      wsRef.current?.close();
+    };
   }, [connectWS]);
 
   useEffect(() => {
@@ -915,7 +1007,7 @@ function MainDashboard() {
                       <StatRow label={`SMA (${liveConfig.sma_window ?? 20})`} value={`$${fmt(stockState.indicators?.sma_20)}`}/>
                       <StatRow label="Momentum" value={`${fmt(stockState.indicators?.momentum)}%`} valueColor={(stockState.indicators?.momentum ?? 0) >= 0 ? theme.green : theme.red}/>
                       <StatRow label="RSI" value={fmt(stockState.indicators?.rsi, 1)} valueColor={rsiColor(stockState.indicators?.rsi ?? 50)}/>
-                      <StatRow label="Tick Latency" value={`${fmt(stockState.metrics?.latency_ms, 1)} ms`} valueColor={theme.cyan}/>
+                      <StatRow label="Tick Latency" value={`${fmt(stockState.metrics?.latency_ms, 1)} ms`} valueColor={stockState.metrics?.latency_ms > (liveConfig.tick_interval_seconds * 1000) ? theme.red : theme.cyan}/>
                     </div>
                   </Card>
 

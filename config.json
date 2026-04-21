@@ -1,5 +1,6 @@
 {
   "data_mode": "synthetic",
+  "stream_workload": 10,
   "replay_filepath": "data/raw/SP500_Historical_Data.csv",
   "tick_interval_seconds": 0.2,
   "active_symbols": [
@@ -14,6 +15,10 @@
     {
       "symbol": "NVDA",
       "base_price": 100.0
+    },
+    {
+      "symbol": "ABT",
+      "base_price": 100.0
     }
   ],
   "max_files_per_trigger": 5,
@@ -23,15 +28,15 @@
   "min_ai_confidence": 0,
   "trade_size_shares": 1,
   "max_chart_points": 100,
-  "benchmark_workload": 5000,
+  "benchmark_workload": 10000,
   "market_condition": "normal",
-  "auto_trade": false,
+  "auto_trade": true,
   "position_sizing": "fixed",
   "risk_pct": 0.05,
-  "xgb_weight": 0.5,
-  "lasso_weight": 0.5,
   "use_rsi": true,
   "use_macd": true,
   "use_volume": true,
-  "use_sma": true
+  "use_sma": true,
+  "xgb_weight": 0.5,
+  "lasso_weight": 0.5
 }

@@ -164,13 +164,21 @@ import time
 import multiprocessing
 import psutil
 
-NUM_CORES = min(multiprocessing.cpu_count() or 2, 16)
+_machine_cores = multiprocessing.cpu_count() or 2
+try:
+    _requested_cores = int(os.environ.get("PDC_CORES", _machine_cores))
+except ValueError:
+    _requested_cores = _machine_cores
+NUM_CORES = max(1, min(_requested_cores, _machine_cores, 16))
 _total_gb = psutil.virtual_memory().total / (1024 ** 3)
 
 if _total_gb >= 32:   DRIVER_MEM = "12g"
 elif _total_gb >= 16: DRIVER_MEM = "8g"
 elif _total_gb >= 8:  DRIVER_MEM = "4g"
 else:                 DRIVER_MEM = "2g"
+
+
+
 
 try:
     import pyarrow as pa
@@ -181,7 +189,7 @@ except ImportError:
 
 # Absolute paths  [AUTO-6]
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR    = os.path.join(SCRIPT_DIR, "data")
+DATA_DIR    = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "data"))
 RAW_CSV     = os.path.join(DATA_DIR, "raw", "SP500_Historical_Data.csv")
 OUTPUT_DIR  = os.path.join(DATA_DIR, "processed", "historical_parquet")
 
@@ -199,7 +207,7 @@ print(f"  Output   : {OUTPUT_DIR}\n")
 # PHASE 3 — IMPORTS
 # =============================================================================
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, randn, expr, broadcast
+from pyspark.sql.functions import col, randn, expr, broadcast, greatest, least, lit
 from pyspark.sql.types import DoubleType, LongType, TimestampType
 
 # =============================================================================
@@ -219,10 +227,10 @@ def build_ingestion_session() -> SparkSession:
     return (
         SparkSession.builder
         .appName("PDC_Parallel_Ingestion")
-        .master("local[*]")
+        .master(f"local[{NUM_CORES}]")
         .config("spark.driver.memory",   DRIVER_MEM)        # [AUTO-4]
         .config("spark.executor.memory", DRIVER_MEM)
-        .config("spark.ui.port", "0")                        # no port conflicts
+        .config("spark.ui.port", "4040")                        # no port conflicts
         .config("spark.serializer",
                 "org.apache.spark.serializer.KryoSerializer")  # [ENH-I3]
         .config("spark.kryoserializer.buffer.max", "512m")
@@ -286,10 +294,12 @@ def run_ingestion():
         big_df
         .withColumn("timestamp",
             expr("date_add(timestamp, cast(shift_years * 365 as int))"))
-        .withColumn("Open",  col("Open")  + (randn(42) * 0.5))
-        .withColumn("High",  col("High")  + (randn(43) * 0.5))
-        .withColumn("Low",   col("Low")   + (randn(44) * 0.5))
-        .withColumn("Close", col("Close") + (randn(45) * 0.5))
+        .withColumn("Open",  greatest(lit(1.0), col("Open")  + (randn(42) * 0.5)))
+        .withColumn("High",  greatest(lit(1.0), col("High")  + (randn(43) * 0.5)))
+        .withColumn("Low",   greatest(lit(1.0), col("Low")   + (randn(44) * 0.5)))
+        .withColumn("Close", greatest(lit(1.0), col("Close") + (randn(45) * 0.5)))
+        .withColumn("High", greatest(col("High"), col("Open"), col("Close"), col("Low")))
+        .withColumn("Low",  least(col("Low"), col("Open"), col("Close"), col("High")))
         .drop("shift_years")
     )
 

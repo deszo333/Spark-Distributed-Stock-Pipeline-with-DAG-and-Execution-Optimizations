@@ -41,6 +41,17 @@ from pydantic import BaseModel
 from mpi_benchmark import run_serial, run_parallel
 
 import os
+try:
+    import orjson
+except ImportError:
+    orjson = None
+
+
+def _json_dumps(payload: dict) -> str:
+    if orjson is not None:
+        return orjson.dumps(payload, default=str).decode("utf-8")
+    return json.dumps(payload, default=str)
+
 os.makedirs("data", exist_ok=True)
 os.makedirs("data/user_uploads", exist_ok=True)
 
@@ -86,6 +97,7 @@ def _auto_discover_symbols(limit=500):
 
 _CONFIG_DEFAULTS: Dict[str, Any] = {
     "data_mode":             "synthetic",
+    "stream_workload":       100,           
     "replay_filepath":       None,
     "tick_interval_seconds": 2.0,
     "active_symbols": _auto_discover_symbols(50), # Start with 50 default active
@@ -101,8 +113,6 @@ _CONFIG_DEFAULTS: Dict[str, Any] = {
     "auto_trade":            False,   # DEFAULT = suggestion-only
     "position_sizing":       "fixed",
     "risk_pct":              0.05,
-    "xgb_weight":            0.5,
-    "lasso_weight":          0.5,
     "use_rsi":               True,
     "use_macd":              True,
     "use_volume":            True,
@@ -178,7 +188,7 @@ class ConnectionManager:
 
     async def broadcast(self, payload: dict):
         dead = []
-        msg  = json.dumps(payload, default=str)
+        msg  = _json_dumps(payload)
         async with self._lock:
             targets = list(self.active)
         for ws in targets:
@@ -252,7 +262,7 @@ class StateUpdate(BaseModel):
     momentum:        float
     signal:          str
     lasso_target:    float
-    xgb_direction:   str
+    xgb_direction:   str            # kept for UI backward compat
     confidence:      int
     explanation:     str
     latency_ms:      float
@@ -268,8 +278,14 @@ class StateUpdate(BaseModel):
     macd_signal:     float = 0.0
     macd_histogram:  float = 0.0
     lasso_mae:       float = 0.0
-    xgb_accuracy:    float = 0.0
+    xgb_accuracy:    float = 0.0    # kept for UI backward compat
+    gbt_accuracy:    float = 0.0    # NEW — real GBT accuracy
+    lasso_return:    float = 0.0    # NEW — % return from Lasso
+    lasso_return_raw: float = 0.0
     lasso_error:     Optional[float] = None
+    gbt_probability: Optional[float] = None
+    gbt_stale:       bool = False
+    gbt_direction:   str  = "HOLD"  # NEW — same as xgb_direction, cleaner name
 
 class BenchmarkRequest(BaseModel):
     type: str
@@ -283,6 +299,7 @@ class SymbolEntry(BaseModel):
 
 class ConfigUpdate(BaseModel):
     data_mode:             Optional[str]               = None
+    stream_workload:       Optional[int]               = None
     replay_filepath:       Optional[str]               = None
     tick_interval_seconds: Optional[float]             = None
     active_symbols:        Optional[List[SymbolEntry]] = None
@@ -298,8 +315,6 @@ class ConfigUpdate(BaseModel):
     auto_trade:            Optional[bool]              = None
     position_sizing:       Optional[str]               = None
     risk_pct:              Optional[float]             = None
-    xgb_weight:            Optional[float]             = None
-    lasso_weight:          Optional[float]             = None
     use_rsi:               Optional[bool]              = None
     use_macd:              Optional[bool]              = None
     use_volume:            Optional[bool]              = None
@@ -336,9 +351,6 @@ async def update_config(data: ConfigUpdate):
         ]
 
     CONFIG.update(updated)
-
-    if "xgb_weight" in updated:
-        CONFIG["lasso_weight"] = round(1.0 - float(CONFIG["xgb_weight"]), 3)
 
     _save_config(CONFIG)
     SYSTEM_STATE["config"] = dict(CONFIG)
@@ -415,6 +427,7 @@ async def update_state(data_list: List[StateUpdate], bg_tasks: BackgroundTasks):
     """Ultra-Low Latency State Update."""
     
     trades_to_insert = []
+    tick_deltas = {}
     
     for data in data_list:
         try:
@@ -429,19 +442,31 @@ async def update_state(data_list: List[StateUpdate], bg_tasks: BackgroundTasks):
                 "macd": {"line": data.macd_line, "signal": data.macd_signal, "histogram": data.macd_histogram}
             })
             SYSTEM_STATE[sym]["signals"].update({
-                "current": data.signal, "lasso_target": data.lasso_target,
-                "xgb_direction": data.xgb_direction, "confidence": data.confidence, "explanation": data.explanation,
-                "lasso_mae": data.lasso_mae, "xgb_accuracy": data.xgb_accuracy, "lasso_error": data.lasso_error
+                "current":       data.signal,
+                "lasso_target":  data.lasso_target,
+                "lasso_return":  data.lasso_return,    # NEW — % return
+                "lasso_return_raw": data.lasso_return_raw,
+                "xgb_direction": data.xgb_direction,   # kept for UI compat
+                "gbt_direction": data.gbt_direction,   # NEW — cleaner name
+                "gbt_probability": data.gbt_probability,
+                "gbt_stale":     data.gbt_stale,
+                "confidence":    data.confidence,
+                "explanation":   data.explanation,
+                "lasso_mae":     data.lasso_mae,
+                "xgb_accuracy":  data.xgb_accuracy,    # kept for UI compat
+                "gbt_accuracy":  data.gbt_accuracy,    # NEW
+                "lasso_error":   data.lasso_error
             })
             SYSTEM_STATE[sym]["metrics"].update({
                 "latency_ms": data.latency_ms, "throughput": data.throughput
             })
 
             # Append to fast rolling arrays
-            SYSTEM_STATE[sym]["market"]["history"].append({
+            history_point = {
                 "price": data.price, "target": data.lasso_target, "sma": data.sma_20,
                 "rsi": data.rsi, "macd": data.macd_line, "time": datetime.now().isoformat()
-            })
+            }
+            SYSTEM_STATE[sym]["market"]["history"].append(history_point)
             if len(SYSTEM_STATE[sym]["market"]["history"]) > 100:
                 SYSTEM_STATE[sym]["market"]["history"].pop(0)
 
@@ -455,6 +480,17 @@ async def update_state(data_list: List[StateUpdate], bg_tasks: BackgroundTasks):
                 log = SYSTEM_STATE["global_trading"]["trade_log"]
                 log.insert(0, f"[{sym}] {data.trade_executed}")
                 if len(log) > 10: log.pop()
+
+            tick_deltas[sym] = {
+                "market": {
+                    "price": SYSTEM_STATE[sym]["market"]["price"],
+                    "history_point": history_point,
+                },
+                "indicators": SYSTEM_STATE[sym]["indicators"],
+                "signals": SYSTEM_STATE[sym]["signals"],
+                "metrics": SYSTEM_STATE[sym]["metrics"],
+                "anomalies": SYSTEM_STATE[sym].get("anomalies", []),
+            }
                 
         except Exception as e:
             print(f"⚠️ [/update] Error updating {sym}: {type(e).__name__}: {e}")
@@ -482,8 +518,16 @@ async def update_state(data_list: List[StateUpdate], bg_tasks: BackgroundTasks):
             "symbols_scored":   len(all_mae),
         }
 
-    # 1. BROADCAST TO REACT UI IMMEDIATELY (Bypass Disk Latency)
-    await manager.broadcast({"type": "state_update", "data": SYSTEM_STATE})
+    # 1. BROADCAST COMPACT DELTAS TO REACT UI IMMEDIATELY
+    payload = {
+        "symbols": tick_deltas,
+        "global_trading": SYSTEM_STATE["global_trading"],
+        "top_movers": SYSTEM_STATE["top_movers"],
+        "config": SYSTEM_STATE["config"],
+    }
+    if "replay_accuracy" in SYSTEM_STATE:
+        payload["replay_accuracy"] = SYSTEM_STATE["replay_accuracy"]
+    await manager.broadcast({"type": "tick_update", "data": payload})
 
     # 2. DISPATCH HARD DRIVE WRITE TO BACKGROUND THREAD
     if trades_to_insert:
@@ -496,7 +540,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         await websocket.send_text(
-            json.dumps({"type": "state_update", "data": SYSTEM_STATE}, default=str)
+            _json_dumps({"type": "state_update", "data": SYSTEM_STATE})
         )
     except Exception:
         pass
@@ -506,7 +550,7 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 payload = json.loads(raw)
                 if payload.get("action") == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}))
+                    await websocket.send_text(_json_dumps({"type": "pong"}))
             except json.JSONDecodeError:
                 pass
     except (WebSocketDisconnect, Exception):
