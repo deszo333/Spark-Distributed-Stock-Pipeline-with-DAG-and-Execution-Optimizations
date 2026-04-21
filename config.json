@@ -2,7 +2,7 @@
   "data_mode": "synthetic",
   "stream_workload": 10,
   "replay_filepath": "data/raw/SP500_Historical_Data.csv",
-  "tick_interval_seconds": 0.5,
+  "tick_interval_seconds": 1.0,
   "active_symbols": [
     {
       "symbol": "AAPL",
@@ -15,6 +15,18 @@
     {
       "symbol": "NVDA",
       "base_price": 100.0
+    },
+    {
+      "symbol": "BLDR",
+      "base_price": 100.0
+    },
+    {
+      "symbol": "NCLH",
+      "base_price": 100.0
+    },
+    {
+      "symbol": "TDY",
+      "base_price": 100.0
     }
   ],
   "max_files_per_trigger": 5,
@@ -26,7 +38,7 @@
   "max_chart_points": 100,
   "benchmark_workload": 10000,
   "market_condition": "normal",
-  "auto_trade": true,
+  "auto_trade": false,
   "position_sizing": "fixed",
   "risk_pct": 0.05,
   "use_rsi": true,

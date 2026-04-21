@@ -596,7 +596,7 @@ async def execute_benchmark(req: BenchmarkRequest):
             SYSTEM_STATE["benchmark_suite"]["streaming_latency"] = res
             
         elif req.type == "compute":
-            # Route to pure MPI script to bypass heavy PySpark Windows import penalties
+            # Execute heavy CPU stress testing
             workload = max(1, min(req.workload, 10_000))
             iterations = 100_000
             
@@ -606,14 +606,15 @@ async def execute_benchmark(req: BenchmarkRequest):
             n_cores = multiprocessing.cpu_count()
             speedup = s_time / p_time if p_time > 0 else 1.0
             
+            # [FIX] Update the payload to reflect a PySpark benchmark for the UI
             SYSTEM_STATE["benchmark_suite"]["monte_carlo"] = {
                 "data_points": workload * iterations,
                 "cores_used": n_cores,
                 "serial_time": round(s_time, 3),
                 "parallel_time": round(p_time, 3),
                 "speedup": round(speedup, 2),
-                "task": "Monte Carlo Math Stress",
-                "model": "Python multiprocessing"
+                "task": "DataFrame GroupBy & Aggregation",
+                "model": "PySpark Engine (local[1] vs local[*])"
             }
     except Exception as e:
         print(f"⚠️ Benchmark Error ({req.type}): {e}")

@@ -783,7 +783,7 @@ function MainDashboard() {
         <div style={{ backgroundColor: theme.surface, borderBottom: `1px solid ${theme.border}`, padding: '0 24px', display: 'flex', gap: 12, flexShrink: 0 }}>
           {[
             { id: 'chart',       label: 'Price Chart',   icon: <BarChart2 size={16}/> },
-            { id: 'indicators',  label: 'Indicators',    icon: <Activity size={16}/> },
+            { id: 'indicators',  label: 'Indicators',     icon: <Activity size={16}/> },
             { id: 'trades',      label: 'Trade History', icon: <TrendingUp size={16}/> },
             { id: 'benchmark',   label: 'System Perf.',  icon: <Cpu size={16}/> },
           ].map(tab => (
@@ -812,15 +812,15 @@ function MainDashboard() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
                         <SignalBadge signal={stockState.signals?.current ?? 'HOLD'}/>
                         <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 500 }}>
-                          XGB Boost: <span style={{ color: stockState.signals?.xgb_direction === 'UP' ? theme.green : theme.red, fontWeight: 700 }}>
-                            {stockState.signals?.xgb_direction ?? 'FLAT'}
+                          Native LightGBM: <span style={{ color: (stockState.signals?.gbt_direction ?? stockState.signals?.xgb_direction) === 'UP' ? theme.green : theme.red, fontWeight: 700 }}>
+                            {stockState.signals?.gbt_direction ?? stockState.signals?.xgb_direction ?? 'FLAT'}
                           </span>
                         </span>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <StatRow label="Lasso Target" value={`$${fmt(stockState.signals?.lasso_target)}`}/>
                         <StatRow label="Confidence"   value={`${stockState.signals?.confidence ?? 0}%`} valueColor={theme.cyan}/>
-                        <StatRow label="Spark Compute" value={`${fmt(stockState.metrics?.latency_ms, 2)} ms`} valueColor={theme.green}/>
+                        <StatRow label="C++ Latency" value={`${fmt(stockState.metrics?.latency_ms, 2)} ms`} valueColor={theme.green}/>
                         <StatRow label="Throughput"   value={`${stockState.metrics?.throughput ?? 0} op/s`}/>
                       </div>
                     </Card>
@@ -878,11 +878,11 @@ function MainDashboard() {
                             <div style={{ fontSize: 10, color: theme.textSub, marginTop: 2 }}>mean absolute error vs actual</div>
                           </div>
                           <div style={{ backgroundColor: theme.surfaceHigh, padding: 12, borderRadius: 8, textAlign: 'center', border: `1px solid ${theme.border}` }}>
-                            <div style={{ fontSize: 22, fontWeight: 700, color: globalState.replay_accuracy.avg_xgb_accuracy >= 55 ? theme.green : theme.red }}>
-                              {fmt(globalState.replay_accuracy.avg_xgb_accuracy, 1)}%
+                            <div style={{ fontSize: 22, fontWeight: 700, color: (globalState.replay_accuracy.avg_gbt_accuracy ?? globalState.replay_accuracy.avg_xgb_accuracy) >= 55 ? theme.green : theme.red }}>
+                              {fmt(globalState.replay_accuracy.avg_gbt_accuracy ?? globalState.replay_accuracy.avg_xgb_accuracy, 1)}%
                             </div>
                             <div style={{ fontSize: 11, color: theme.textSub, marginTop: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                              XGBoost Direction
+                              LightGBM Direction
                             </div>
                             <div style={{ fontSize: 10, color: theme.textSub, marginTop: 2 }}>% correct UP/DOWN calls</div>
                           </div>
@@ -898,11 +898,11 @@ function MainDashboard() {
                             value="50.0%" 
                             valueColor={theme.textSub}
                           />
-                          {globalState.replay_accuracy.avg_xgb_accuracy > 0 && (
+                          {(globalState.replay_accuracy.avg_gbt_accuracy ?? globalState.replay_accuracy.avg_xgb_accuracy) > 0 && (
                             <StatRow 
                               label="Edge vs Random" 
-                              value={`${fmt(globalState.replay_accuracy.avg_xgb_accuracy - 50, 1)}%`}
-                              valueColor={globalState.replay_accuracy.avg_xgb_accuracy >= 50 ? theme.green : theme.red}
+                              value={`${fmt((globalState.replay_accuracy.avg_gbt_accuracy ?? globalState.replay_accuracy.avg_xgb_accuracy) - 50, 1)}%`}
+                              valueColor={(globalState.replay_accuracy.avg_gbt_accuracy ?? globalState.replay_accuracy.avg_xgb_accuracy) >= 50 ? theme.green : theme.red}
                             />
                           )}
                         </div>
@@ -1070,7 +1070,7 @@ function MainDashboard() {
                 </Card>
               )}
 
-{/* ── BENCHMA{/* ── BENCHMARK TAB (ACADEMIC PRESENTATION VIEW) ─────────────────────────── */}
+              {/* ── BENCHMARK TAB (ACADEMIC PRESENTATION VIEW) ─────────────────────────── */}
               {activeTab === 'benchmark' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 24, height: '100%', paddingBottom: 40 }}>
                   
@@ -1084,61 +1084,15 @@ function MainDashboard() {
                     </div>
                   </Card>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24 }}>
-                    
-                    {/* Pillar 1: Big Data ML Inference */}
+                  {/* CHANGED: gridTemplateColumns is now '1fr 1fr' for a perfect 2-column layout */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+
+                    {/* NEW TEST 1: Streaming Latency (Formerly Test 2) */}
                     <Card style={{ gap: 16 }}>
                       <div style={{ borderBottom: `1px solid ${theme.border}`, paddingBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 4 }}>Test 1: Scalability</div>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>Big Data ML Inference</div>
-                        </div>
-                        <button className="btn-hover" onClick={() => triggerSpecificBenchmark('ml', setBenchML)} disabled={benchML}
-                          style={{ padding: '6px 12px', borderRadius: 6, border: `1px solid ${theme.cyan}`, backgroundColor: benchML ? theme.surfaceHigh : `${theme.cyan}15`, color: theme.cyan, fontWeight: 600, fontSize: 11, cursor: benchML ? 'wait' : 'pointer' }}>
-                          {benchML ? 'Running...' : 'Execute Test'}
-                        </button>
-                      </div>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <StatRow label="Dataset Size" value={mlData ? `${(mlData.dataset_rows).toLocaleString()} Rows` : '—'}/>
-                        <StatRow label="Workload" value={mlData?.task ?? "Cached Batch Lasso Inference"}/>
-                        <StatRow label="Engine" value={mlData?.model ?? "Single-Core Python Baseline vs Distributed Spark ML Pipeline"}/>
-                        {mlData && <StatRow label="Checksum Delta" value={fmt(mlData.checksum_delta, 6)} valueColor={theme.cyan}/>}
-                        {mlData && <StatRow label="Validation Delta" value={fmt(mlData.validation_delta, 6)} valueColor={theme.cyan}/>}
-                      </div>
-
-                      <div style={{ marginTop: 'auto', paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
-                        <BenchmarkComparison
-                          data={mlData}
-                          serialKey="serial_time"
-                          parallelKey="parallel_time"
-                          unit="s"
-                          color={theme.cyan}
-                          serialLabel="Serial Python"
-                          parallelLabel="Distributed Spark ML"
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 12 }}>
-                          <span style={{ color: theme.textSub }}>Serial Python</span>
-                          <span style={{ color: theme.text, fontWeight: 600 }}>{mlData ? `${fmt(mlData.serial_time, 2)}s` : '—'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, fontSize: 12 }}>
-                          <span style={{ color: theme.cyan, fontWeight: 600 }}>Distributed Spark ML</span>
-                          <span style={{ color: theme.cyan, fontWeight: 700 }}>{mlData ? `${fmt(mlData.parallel_time, 2)}s` : '—'}</span>
-                        </div>
-                        
-                        <div style={{ backgroundColor: theme.surfaceHigh, padding: 12, borderRadius: 8, textAlign: 'center', border: `1px solid ${theme.border}` }}>
-                          <div style={{ fontSize: 24, fontWeight: 700, color: theme.cyan }}>{mlData?.speedup ?? '—'}x</div>
-                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4, fontWeight: 600 }}>Speedup Multiplier</div>
-                        </div>
-                      </div>
-                    </Card>
-
-                    {/* Pillar 2: Streaming Latency */}
-                    <Card style={{ gap: 16 }}>
-                      <div style={{ borderBottom: `1px solid ${theme.border}`, paddingBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 4 }}>Test 2: Real-Time</div>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>Streaming Latency</div>
+                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 4 }}>Test 1: Real-Time</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>Streaming Engine Latency</div>
                         </div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button onClick={() => setOptStream(!optStream)}
@@ -1153,7 +1107,7 @@ function MainDashboard() {
                       </div>
                       
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <StatRow label="Active Stream" value={streamData ? `${streamData.symbols.toLocaleString()} Symbols` : '—'}/>
+                        <StatRow label="Active Stream" value={streamData ? `${streamData.symbols?.toLocaleString() ?? 500} Symbols` : '—'}/>
                         <StatRow label="Workload" value={streamData?.task ?? "HFT Burst Inference"}/>
                         <StatRow label="Mode" value={streamData?.model ?? (optStream ? "Tungsten SIMD Vectorization" : "Fair Distributed Chunking")}/>
                         <StatRow label="Measurement" value="Batch Runtime"/>
@@ -1170,11 +1124,11 @@ function MainDashboard() {
                           parallelLabel={streamData?.model?.includes("SIMD") ? "Vectorized Batch" : "Parallel Workers"}
                         />
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 12 }}>
-                          <span style={{ color: theme.textSub }}>Sequential Loop</span>
+                          <span style={{ color: theme.textSub }}>Sequential Python Loop</span>
                           <span style={{ color: theme.text, fontWeight: 600 }}>{streamData ? `${fmt(streamData.serial_ms, 1)}ms` : '—'}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, fontSize: 12 }}>
-                          <span style={{ color: theme.green, fontWeight: 600 }}>{streamData?.model?.includes("SIMD") ? "Vectorized Batch" : "Parallel Workers"}</span>
+                          <span style={{ color: theme.green, fontWeight: 600 }}>{streamData?.model?.includes("SIMD") ? "C++ Vectorized Batch" : "Parallel Workers"}</span>
                           <span style={{ color: theme.green, fontWeight: 700 }}>{streamData ? `${fmt(streamData.parallel_ms, 1)}ms` : '—'}</span>
                         </div>
                         
@@ -1185,12 +1139,12 @@ function MainDashboard() {
                       </div>
                     </Card>
 
-                    {/* Pillar 3: Raw Compute */}
+                    {/* NEW TEST 2: PySpark Architecture (Formerly Test 3) */}
                     <Card style={{ gap: 16 }}>
                       <div style={{ borderBottom: `1px solid ${theme.border}`, paddingBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 4 }}>Test 3: Architecture</div>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>CPU Math Stress</div>
+                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 4 }}>Test 2: Data Engine</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>PySpark Parallelism</div>
                         </div>
                         <button className="btn-hover" onClick={() => triggerSpecificBenchmark('compute', setBenchCompute)} disabled={benchCompute}
                           style={{ padding: '6px 12px', borderRadius: 6, border: `1px solid ${theme.purple}`, backgroundColor: benchCompute ? theme.surfaceHigh : `${theme.purple}15`, color: theme.purple, fontWeight: 600, fontSize: 11, cursor: benchCompute ? 'wait' : 'pointer' }}>
@@ -1199,10 +1153,10 @@ function MainDashboard() {
                       </div>
                       
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <StatRow label="Data Points" value={mcData ? (mcData.data_points).toLocaleString() : '—'}/>
-                        <StatRow label="Workload" value={mcData?.task ?? "Monte Carlo Math Stress"}/>
-                        <StatRow label="Engine" value={mcData?.model ?? "Python multiprocessing"}/>
-                        <StatRow label="Cores Used" value={mcData?.cores_used ?? 'All'}/>
+                        <StatRow label="Rows Shuffled" value={mcData ? (mcData.data_points).toLocaleString() : '—'}/>
+                        <StatRow label="Workload" value={mcData?.task ?? "Heavy DataFrame Aggregation"}/>
+                        <StatRow label="Engine" value={mcData?.model ?? "PySpark MapReduce"}/>
+                        <StatRow label="Nodes/Cores" value={mcData?.cores_used ?? 'All'}/>
                       </div>
 
                       <div style={{ marginTop: 'auto', paddingTop: 16, borderTop: `1px solid ${theme.border}` }}>
@@ -1212,21 +1166,21 @@ function MainDashboard() {
                           parallelKey="parallel_time"
                           unit="s"
                           color={theme.purple}
-                          serialLabel="Serial CPU"
-                          parallelLabel="Parallel CPU"
+                          serialLabel="PySpark Serial"
+                          parallelLabel="PySpark Parallel"
                         />
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 12 }}>
-                          <span style={{ color: theme.textSub }}>Serial (1 Core)</span>
+                          <span style={{ color: theme.textSub }}>PySpark (local[1])</span>
                           <span style={{ color: theme.text, fontWeight: 600 }}>{mcData ? `${fmt(mcData.serial_time, 2)}s` : '—'}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, fontSize: 12 }}>
-                          <span style={{ color: theme.purple, fontWeight: 600 }}>Parallel CPU</span>
+                          <span style={{ color: theme.purple, fontWeight: 600 }}>PySpark (local[*])</span>
                           <span style={{ color: theme.purple, fontWeight: 700 }}>{mcData ? `${fmt(mcData.parallel_time, 2)}s` : '—'}</span>
                         </div>
                         
                         <div style={{ backgroundColor: theme.surfaceHigh, padding: 12, borderRadius: 8, textAlign: 'center', border: `1px solid ${theme.border}` }}>
                           <div style={{ fontSize: 24, fontWeight: 700, color: theme.purple }}>{mcData?.speedup ?? '—'}x</div>
-                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4, fontWeight: 600 }}>Compute Speedup</div>
+                          <div style={{ fontSize: 11, color: theme.textSub, textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4, fontWeight: 600 }}>Cluster Speedup</div>
                         </div>
                       </div>
                     </Card>

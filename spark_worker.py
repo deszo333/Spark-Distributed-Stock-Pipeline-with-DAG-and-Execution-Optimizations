@@ -42,8 +42,6 @@ from pyspark.sql.types import (
     StructType, StructField, DoubleType, TimestampType, StringType
 )
 from pyspark.ml.regression import LinearRegressionModel
-from pyspark.ml.classification import GBTClassificationModel
-from pyspark.ml.feature import VectorAssembler
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 CONFIG_FILE = "config.json"
@@ -212,32 +210,31 @@ except Exception as e:
     LASSO_INTERCEPT = 0.0
     LASSO_READY     = False
 
-# ── Load GBT model (main — predicts direction UP/DOWN)  [FIX-1, FIX-2] ────────
-# GBT inference uses a Spark DataFrame per batch — we build it from collected rows
-print("Loading GBT model (main classifier)...")
+# ── Load GBT model (Native LightGBM — predicts direction UP/DOWN) ──────────────
+# ── Load GBT model (Native LightGBM — predicts direction UP/DOWN) ──────────────
+print("Loading Native LightGBM model (main classifier)...")
 try:
-    GBT_MODEL = GBTClassificationModel.load("data/models/gbt_model")
+    import lightgbm as lgb
+    # Safely check both root data/ and nested spark_pipeline/data/ paths
+    model_path = "data/models/lightgbm_native_model.txt"
+    if not os.path.exists(model_path):
+        model_path = "spark_pipeline/data/models/lightgbm_native_model.txt"
+        
+    GBT_MODEL = lgb.Booster(model_file=model_path)
     GBT_READY = True
-    print("  GBT model ready.")
+    print(f"  Native LightGBM model ready (Loaded from {model_path}).")
 except Exception as e:
-    print(f"  WARNING: GBT model not found ({e}). Run ml_forecaster.py first.")
+    print(f"  WARNING: Native LightGBM model not found ({e}).")
     GBT_MODEL = None
     GBT_READY = False
 
-# GBT feature set — must match GBT_FEATURE_COLS in ml_forecaster.py
+# GBT feature set
 GBT_INFERENCE_COLS = [
     "Open", "High", "Low", "Close", "Volume",
     "MA_10", "MA_30", "Volatility", "Vol_MA_10",
     "Momentum_1", "Momentum_5",
     "Close_norm", "Volume_norm", "MA_ratio_10_30",
 ]
-
-# VectorAssembler for GBT inference (initialized once, reused per batch)
-_gbt_assembler = VectorAssembler(
-    inputCols=GBT_INFERENCE_COLS,
-    outputCol="gbt_features",
-    handleInvalid="skip"
-)
 
 
 def lasso_predict(features: np.ndarray) -> float:
@@ -251,53 +248,46 @@ def lasso_predict(features: np.ndarray) -> float:
 
 def gbt_predict_batch(rows_data: list) -> dict:
     """
-    [FIX-1] Real GBT inference using the trained GBTClassifierModel.
-    Converts collected rows to a Spark DataFrame and calls .transform().
+    Real-time Native LightGBM inference.
+    Bypasses PySpark DataFrames entirely for massive latency reduction.
     Returns dict: symbol -> {direction, probability}
-    Falls back to Lasso-based direction if GBT model unavailable.
     """
     if not GBT_READY or not rows_data:
         return {}
 
-    from pyspark.sql import Row
-    from pyspark.sql.types import (StructType, StructField, StringType,
-                                   DoubleType, LongType)
-
-    schema = StructType([
-        StructField("symbol",     StringType(), True),
-        StructField("Open",       DoubleType(), True),
-        StructField("High",       DoubleType(), True),
-        StructField("Low",        DoubleType(), True),
-        StructField("Close",      DoubleType(), True),
-        StructField("Volume",     DoubleType(), True),
-        StructField("MA_10",      DoubleType(), True),
-        StructField("MA_30",      DoubleType(), True),
-        StructField("Volatility", DoubleType(), True),
-        StructField("Vol_MA_10",  DoubleType(), True),
-        StructField("Momentum_1", DoubleType(), True),
-        StructField("Momentum_5", DoubleType(), True),
-        StructField("Close_norm", DoubleType(), True),
-        StructField("Volume_norm",DoubleType(), True),
-        StructField("MA_ratio_10_30", DoubleType(), True),
-    ])
-
+    results = {}
     try:
-        df_inf = spark.createDataFrame(rows_data, schema=schema)
-        df_vec = _gbt_assembler.transform(df_inf)
-        df_pred = GBT_MODEL.transform(df_vec)
-        results = {}
-        for row in df_pred.select("symbol", "prediction", "probability").collect():
-            prediction = float(row["prediction"])
-            probs = row["probability"]
-            predicted_prob = float(probs[int(prediction)]) if probs is not None else None
-            results[row["symbol"]] = {
-                "direction": prediction,
-                "probability": predicted_prob,
+        # 1. Extract features into a pure Python list in the EXACT correct order
+        feature_matrix = []
+        symbols = []
+        
+        for row in rows_data:
+            symbols.append(row["symbol"])
+            features = [
+                row["Open"], row["High"], row["Low"], row["Close"], row["Volume"],
+                row["MA_10"], row["MA_30"], row["Volatility"], row["Vol_MA_10"],
+                row["Momentum_1"], row["Momentum_5"],
+                row["Close_norm"], row["Volume_norm"], row["MA_ratio_10_30"]
+            ]
+            feature_matrix.append(features)
+
+        # 2. Convert to NumPy and Predict
+        X = np.array(feature_matrix, dtype=np.float32)
+        probabilities = GBT_MODEL.predict(X)
+
+        # 3. Format results for the UI
+        for sym, prob in zip(symbols, probabilities):
+            direction = 1.0 if prob > 0.5 else 0.0
+            results[sym] = {
+                "direction": direction,
+                "probability": float(prob),
                 "ts": time.time(),
             }
+            
         return results
+
     except Exception as e:
-        print(f"  GBT inference error: {e}")
+        print(f"  Native LGBM inference error: {e}")
         return {}
 
 
@@ -628,11 +618,15 @@ def process_batch(df, epoch_id):
 
         # Fresh GBT confidence is pure model probability; stale/missing GBT falls
         # back to a bounded Lasso strength score and is flagged in the payload.
-        confidence = (
-            int(gbt_probability * 100)
-            if gbt_probability is not None
-            else int(min(70, abs(lasso_return) * 1000))
-        )
+        # Fresh GBT confidence is pure model probability; stale/missing GBT falls
+        # back to a bounded Lasso strength score and is flagged in the payload.
+        if gbt_probability is not None:
+            # If predicting DOWN, confidence is (1.0 - probability of UP)
+            actual_prob = gbt_probability if gbt_dir == 1.0 else (1.0 - gbt_probability)
+            confidence = int(actual_prob * 100)
+        else:
+            # Fallback cap at 70% if model is missing entirely
+            confidence = int(min(70, abs(lasso_return) * 1000))
 
         # ── Replay accuracy scoring  [FIX-3] renamed xgb→gbt ─────────────────
         lasso_error = None
@@ -729,18 +723,21 @@ def process_batch(df, epoch_id):
 
         # [FIX-3] field names: xgb_direction kept for UI backward-compat,
         # xgb_accuracy renamed to gbt_accuracy. Both sent.
+        # [FIX] Safely fallback to 0.0 instead of None to prevent api_engine.py 500 crashes
+        # [FIX] Restored 'volume' so api_engine.py can correctly calculate Top Movers
         payload = {
             "symbol":          sym,
             "price":           round(current_price, 2),
+            "volume":          f["volume"],                  # <--- THIS WAS MISSING
             "sma_20":          round(f["sma_val"], 2),
             "momentum":        round(f["momentum_1"]*100, 2),
             "signal":          signal,
-            "lasso_target":    lasso_target_price,       # price form for UI
-            "lasso_return":    round(lasso_return*100, 4), # % form
-            "lasso_return_raw": round(lasso_return_raw*100, 4), # unclamped diagnostic
-            "xgb_direction":   "UP" if gbt_dir==1.0 else "DOWN",  # UI compat
-            "gbt_direction":   "UP" if gbt_dir==1.0 else "DOWN",  # new name
-            "gbt_probability": round(gbt_probability * 100, 2) if gbt_probability is not None else None,
+            "lasso_target":    lasso_target_price,       
+            "lasso_return":    round(lasso_return*100, 4), 
+            "lasso_return_raw": round(lasso_return_raw*100, 4), 
+            "xgb_direction":   "UP" if gbt_dir==1.0 else "DOWN",  
+            "gbt_direction":   "UP" if gbt_dir==1.0 else "DOWN",  
+            "gbt_probability": round(gbt_probability * 100, 2) if gbt_probability is not None else 0.0,
             "gbt_stale":       gbt_is_stale,
             "confidence":      confidence,
             "explanation":     explanation,
@@ -759,7 +756,7 @@ def process_batch(df, epoch_id):
             "lasso_mae":       round(_accuracy_state[sym]["lasso_mae"], 4)    if sym in _accuracy_state else 0.0,
             "xgb_accuracy":    round(_accuracy_state[sym]["gbt_accuracy"], 1) if sym in _accuracy_state else 0.0,
             "gbt_accuracy":    round(_accuracy_state[sym]["gbt_accuracy"], 1) if sym in _accuracy_state else 0.0,
-            "lasso_error":     round(lasso_error, 4) if lasso_error is not None else None,
+            "lasso_error":     round(lasso_error, 4) if lasso_error is not None else 0.0,
         }
         batch_payloads.append(payload)
 
@@ -873,24 +870,35 @@ def _replay_loop():
         try:
             with open(filepath, "r", newline='') as f:
                 reader = csv.reader(f)
-                next(reader, None)
+                next(reader, None)  # Skip header
                 for csv_row in reader:
                     if len(csv_row) < 7: continue
-                    interval_s = max(0.05, float(_cfg("tick_interval_seconds", 2.0)))
-                    time.sleep(interval_s)
-                    ts_str = csv_row[0].strip()
-                    sym    = csv_row[1].strip().upper()
+                    
+                    sym = csv_row[1].strip().upper()
                     workload = int(_cfg("stream_workload", 100))
                     allowed_symbols = set(SYMBOLS[:workload])
-                    if sym not in allowed_symbols: continue
+                    
+                    # [FIX] Skip ignored symbols IMMEDIATELY before doing any sleeping
+                    if sym not in allowed_symbols: 
+                        continue
+                        
                     try:
                         op,hp,lp,cl,vl = (float(csv_row[i]) for i in range(2,7))
-                    except ValueError: continue
-                    with _state_lock: last_prices[sym] = cl
+                    except ValueError: 
+                        continue
+                    
+                    # [FIX] Only sleep if this is a row we actually want to process
+                    interval_s = max(0.05, float(_cfg("tick_interval_seconds", 2.0)))
+                    time.sleep(interval_s)
+                    
+                    ts_str = csv_row[0].strip()
+                    with _state_lock: 
+                        last_prices[sym] = cl
+                        
                     _write_tick_rows([[ts_str,sym,round(op,4),round(hp,4),
                                        round(lp,4),round(cl,4),int(vl)]], tick_count)
                     tick_count += 1
-                    if tick_count%50==0:
+                    if tick_count % 50 == 0:
                         print(f"  Replay tick #{tick_count} | {sym} @ ${cl:.2f}")
             print("  Replay exhausted — looping")
         except Exception as e:
