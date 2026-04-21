@@ -2,7 +2,7 @@
   "data_mode": "synthetic",
   "stream_workload": 10,
   "replay_filepath": "data/raw/SP500_Historical_Data.csv",
-  "tick_interval_seconds": 0.2,
+  "tick_interval_seconds": 0.5,
   "active_symbols": [
     {
       "symbol": "AAPL",
@@ -14,10 +14,6 @@
     },
     {
       "symbol": "NVDA",
-      "base_price": 100.0
-    },
-    {
-      "symbol": "ABT",
       "base_price": 100.0
     }
   ],

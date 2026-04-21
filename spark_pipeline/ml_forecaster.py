@@ -105,12 +105,20 @@ except ValueError:
 NUM_CORES = max(1, min(_requested_cores, _machine_cores))
 _total_gb = psutil.virtual_memory().total/(1024**3)
 
-if   _total_gb>=32: DRIVER_MEM,OFFHEAP_MEM = "12g","4g"
-elif _total_gb>=16: DRIVER_MEM,OFFHEAP_MEM = "8g", "2g"
-elif _total_gb>=8:  DRIVER_MEM,OFFHEAP_MEM = "4g", "1g"
-else:               DRIVER_MEM,OFFHEAP_MEM = "2g", "512m"
+# Allow environment variable override (set in batch file or command line)
+_env_driver_mem = os.environ.get("PDC_DRIVER_MEMORY", "").strip()
+_env_offheap_mem = os.environ.get("PDC_OFFHEAP_MEMORY", "").strip()
 
-DRIVER_MEM,OFFHEAP_MEM = "6g", "2g"
+if _env_driver_mem:
+    DRIVER_MEM = _env_driver_mem
+    OFFHEAP_MEM = _env_offheap_mem if _env_offheap_mem else "2g"
+else:
+    # Auto-detect based on system RAM
+    if   _total_gb>=32: DRIVER_MEM,OFFHEAP_MEM = "12g","4g"
+    elif _total_gb>=16: DRIVER_MEM,OFFHEAP_MEM = "8g", "2g"
+    elif _total_gb>=8:  DRIVER_MEM,OFFHEAP_MEM = "4g", "1g"
+    else:               DRIVER_MEM,OFFHEAP_MEM = "2g", "512m"
+
 
 try:
     import pyarrow as pa

@@ -6,7 +6,9 @@ echo   STARTING PDC AUTOMATED PIPELINE
 echo ========================================================
 echo.
 
-set PYSPARK_SUBMIT_ARGS=--driver-memory 8g pyspark-shell
+set PYSPARK_SUBMIT_ARGS=--driver-memory 8g --executor-memory 8g pyspark-shell
+set PDC_DRIVER_MEMORY=8g
+set PDC_OFFHEAP_MEMORY=2g
 
 :: --- ACTIVATE VIRTUAL ENVIRONMENT (From Parent Folder) ---
 if exist "..\venv\Scripts\activate.bat" (
